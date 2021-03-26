@@ -5,20 +5,25 @@
 #include <unistd.h>
 #include <stdarg.h>
 #include <time.h>
+#include <stdlib.h>
+#include <assert.h>
 #include "siglog.h"
 
 #define DATE_FORMAT "%m/%d/%y %H:%M:%S"
 
 
 static int initialized = 0;
-static int tid_level, tid_dump;
+static pthread_t tid_level, tid_dump;
 static sem_t sem_dump;
-static pthread_mutex_t log_mutex, level_mutex;
+static pthread_mutex_t log_mutex, level_mutex, dump_mutex;
 static pthread_cond_t level_cond;
 static volatile int level_signal_val;
 static SIGLOG_LEVEL current_level;
 static FILE *log_file;
 
+static struct siglog_element_t *dump_elements;
+static int dump_elements_size;
+static int dump_elements_next;
 
 static void* level_thread(void* arg)
 {
@@ -39,12 +44,50 @@ static void* level_thread(void* arg)
     }
 }
 
+FILE * create_dump_file() {
+    char time_buffer[50];
+
+    time_t time_raw = time(NULL);
+    struct tm *time_info = localtime(&time_raw);
+    strftime(time_buffer, 50, "%m.%d.%y-%H:%M:%S", time_info);
+
+    char filename[100];
+    sprintf(filename, "DUMP-%s.log", time_buffer);
+    FILE *file = fopen(filename, "w");
+    assert(file != NULL);
+    return file;
+}
+
+static void dump_element_to_file(FILE *dump_file, struct siglog_element_t *element) {
+    fprintf(dump_file, "%s: ", element->name);
+
+    if(element->type == SIGLOG_CHAR) fprintf(dump_file, "%c", *((char *)element->data));
+    else if(element->type == SIGLOG_SHORT) fprintf(dump_file, "%hd", *((short *)element->data));
+    else if(element->type == SIGLOG_INT) fprintf(dump_file, "%d", *((int *)element->data));
+    else if(element->type == SIGLOG_FLOAT) fprintf(dump_file, "%f", *((float *)element->data));
+    else if(element->type == SIGLOG_DOUBLE) fprintf(dump_file, "%lf", *((double *)element->data));
+
+    fprintf(dump_file, "\n");
+    fflush(dump_file);
+}
+
+static void dump_elements_to_file(FILE *dump_file) {
+    pthread_mutex_lock(&dump_mutex);
+    for(int i=0; i<dump_elements_next; i++) {
+        dump_element_to_file(dump_file, dump_elements + i);
+    }
+    pthread_mutex_unlock(&dump_mutex);
+}
+
 static void* dump_thread(void* arg)
 {
     while(1)
     {
         sem_wait(&sem_dump);
-        printf("Dump!\n");
+
+        FILE *dump_file = create_dump_file();
+        dump_elements_to_file(dump_file);
+        fclose(dump_file);
     }
 }
 
@@ -90,7 +133,7 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
     err = sem_init(&sem_dump, 0, 0);
     if(err != 0) return 1;
 
-    // Init mutex
+    // Init mutexes
     err = pthread_mutex_init(&log_mutex, NULL);
     if(err != 0) {
         pthread_sigmask(SIG_SETMASK, &set_backup, NULL);
@@ -104,6 +147,14 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
         sem_destroy(&sem_dump);
         fclose(log_file);
     }
+    err = pthread_mutex_init(&dump_mutex, NULL);
+    if(err != 0) {
+        pthread_sigmask(SIG_SETMASK, &set_backup, NULL);
+        pthread_mutex_destroy(&log_mutex);
+        pthread_mutex_destroy(&level_mutex);
+        sem_destroy(&sem_dump);
+        fclose(log_file);
+    }
 
     // Init cond
     err = pthread_cond_init(&level_cond, NULL);
@@ -113,6 +164,7 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
         fclose(log_file);
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&level_mutex);
+        pthread_mutex_destroy(&dump_mutex);
     }
 
     // Set first async handler
@@ -127,6 +179,7 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
         fclose(log_file);
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&level_mutex);
+        pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
     }
 
@@ -142,6 +195,7 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
         fclose(log_file);
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&level_mutex);
+        pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
     }
 
@@ -153,6 +207,7 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
         fclose(log_file);
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&level_mutex);
+        pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
         return 1;
     }
@@ -166,6 +221,7 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
         fclose(log_file);
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&level_mutex);
+        pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
         return 1;
     }
@@ -180,6 +236,7 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
         fclose(log_file);
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&level_mutex);
+        pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
         return 1;
     }
@@ -194,6 +251,23 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
         fclose(log_file);
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&level_mutex);
+        pthread_mutex_destroy(&dump_mutex);
+        pthread_cond_destroy(&level_cond);
+        return 1;
+    }
+
+    // Alloc array
+    dump_elements_size = 8;
+    dump_elements = (struct siglog_element_t *)calloc(sizeof(struct siglog_element_t), dump_elements_size);
+    if(dump_elements == NULL) {
+        pthread_cancel(tid_level);
+        pthread_cancel(tid_dump);
+        pthread_sigmask(SIG_SETMASK, &set_backup, NULL);
+        sem_destroy(&sem_dump);
+        fclose(log_file);
+        pthread_mutex_destroy(&log_mutex);
+        pthread_mutex_destroy(&level_mutex);
+        pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
         return 1;
     }
@@ -202,10 +276,6 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
     current_level = start_level;
     initialized = 1;
     return 0;
-}
-
-void siglog_register_dump_handler(SIGLOG_DUMP_HANDLER handler) {
-
 }
 
 void siglog_free() {
@@ -217,6 +287,7 @@ void siglog_free() {
     pthread_mutex_destroy(&log_mutex);
     pthread_mutex_destroy(&level_mutex);
     pthread_cond_destroy(&level_cond);
+    free(dump_elements);
     fclose(log_file);
 }
 
@@ -274,3 +345,30 @@ void siglog_warning(char *fmt, ...) {
     vlog(SIGLOG_WARNING, fmt, valist);
     va_end(valist);
 }
+
+int siglog_trace(char *name, SIGLOG_TYPE type, void *data) {
+    struct siglog_element_t element;
+    element.name = name;
+    element.type = type;
+    element.data = data;
+
+    pthread_mutex_lock(&dump_mutex);
+
+    if(dump_elements_next >= dump_elements_size) {
+        struct siglog_element_t *new_dump_elements = (struct siglog_element_t *)realloc(dump_elements, sizeof(struct siglog_element_t) * dump_elements_size*2);
+        if(new_dump_elements == NULL) return 1;
+        dump_elements = new_dump_elements;
+        dump_elements_size = dump_elements_size * 2;
+    }
+
+    dump_elements[dump_elements_next++] = element;
+
+    pthread_mutex_unlock(&dump_mutex);
+}
+
+void siglog_trace_char(char *name, char *val) { siglog_trace(name, SIGLOG_CHAR, val); };
+void siglog_trace_short(char *name, short *val) { siglog_trace(name, SIGLOG_SHORT, val); };
+void siglog_trace_int(char *name, int *val) { siglog_trace(name, SIGLOG_INT, val); };
+void siglog_trace_long(char *name, long *val) { siglog_trace(name, SIGLOG_LONG, val); };
+void siglog_trace_float(char *name, float *val) { siglog_trace(name, SIGLOG_FLOAT, val); };
+void siglog_trace_double(char *name, double *val) { siglog_trace(name, SIGLOG_DOUBLE, val); };

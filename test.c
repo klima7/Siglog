@@ -8,6 +8,11 @@
 
 char* dump_handler();
 
+int var1 = 3;
+int var2 = -4;
+float float_var = 3.1415;
+double double_var = 3.1415;
+
 int main() {
 
     // Signal 34
@@ -15,7 +20,11 @@ int main() {
 
     int res = siglog_init(-1, -1, SIGLOG_INFO, "file.txt");
     assert(res == 0);
-    siglog_register_dump_handler(dump_handler);
+
+    siglog_trace_int("var1", &var1);
+    siglog_trace_int("var2", &var2);
+    siglog_trace_float("float_var", &float_var);
+    siglog_trace_double("double_var", &double_var);
 
     sleep(2);
 
@@ -23,7 +32,11 @@ int main() {
 
     while(1) {
         siglog_info("Hello there %d", 4);
-        sleep(1);
+        usleep(500);
+        var1++;
+        var2--;
+        float_var += 0.001;
+        double_var -= 0.001;
     }
 
     siglog_free();
