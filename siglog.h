@@ -8,7 +8,7 @@
 
 // Types
 
-enum siglog_level_t { SIGLOG_DISABLED, SIGLOG_LVL_MIN, SIGLOG_LVL_STD, SIGLOG_LVL_MAX };
+enum siglog_level_t { SIGLOG_DEBUG, SIGLOG_INFO, SIGLOG_WARNING, SIGLOG_DISABLED };
 
 typedef enum siglog_level_t SIGLOG_LEVEL;
 
@@ -24,10 +24,10 @@ void siglog_free();
 
 void siglog_log(SIGLOG_LEVEL level, char *fmt, ...);
 
-void siglog_min(char *fmt, ...);
+void siglog_debug(char *fmt, ...);
 
-void siglog_std(char *fmt, ...);
+void siglog_info(char *fmt, ...);
 
-void siglog_max(char *fmt, ...);
+void siglog_warning(char *fmt, ...);
 
 #endif

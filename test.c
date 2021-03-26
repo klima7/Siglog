@@ -12,9 +12,8 @@ int main() {
 
     // Signal 34
     printf("pid=%d\n", getpid());
-    printf("main: %d", pthread_self());
 
-    int res = siglog_init(-1, -1, SIGLOG_LVL_STD, "file.txt");
+    int res = siglog_init(-1, -1, SIGLOG_INFO, "file.txt");
     assert(res == 0);
     siglog_register_dump_handler(dump_handler);
 
@@ -23,7 +22,7 @@ int main() {
 
 
     while(1) {
-        siglog_std("Hello there %d", 4);
+        siglog_info("Hello there %d", 4);
         sleep(1);
     }
 

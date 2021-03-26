@@ -1,11 +1,9 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <pthread.h>
 #include <semaphore.h>
 #include <signal.h>
 #include <unistd.h>
 #include <stdarg.h>
-#include <assert.h>
 #include <time.h>
 #include "siglog.h"
 
@@ -31,7 +29,7 @@ static void* level_thread(void* arg)
         while(level_signal_val == -1)
             pthread_cond_wait(&level_cond, &level_mutex);
 
-        if(level_signal_val < SIGLOG_DISABLED || level_signal_val > SIGLOG_LVL_MAX)continue;
+        if(level_signal_val < SIGLOG_DEBUG || level_signal_val > SIGLOG_DISABLED) continue;
         pthread_mutex_lock(&log_mutex);
         current_level = level_signal_val;
         level_signal_val = -1;
@@ -46,12 +44,11 @@ static void* dump_thread(void* arg)
     while(1)
     {
         sem_wait(&sem_dump);
-        printf("Signal\n");
+        printf("Dump!\n");
     }
 }
 
 static void level_handler(int signo, siginfo_t *info, void *other) {
-    printf("current_level handler: %d", pthread_self());
     pthread_mutex_lock(&level_mutex);
     level_signal_val = info->si_value.sival_int;
     pthread_cond_signal(&level_cond);
@@ -65,7 +62,6 @@ static void dump_handler() {
 int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_level, char* path) {
 
     // Variables
-    pthread_t tid_level, tid_dump;
     sigset_t set, set_backup;
     struct sigaction act;
     int err;
@@ -226,15 +222,15 @@ void siglog_free() {
 
 static char *str_level(SIGLOG_LEVEL lvl) {
     switch(lvl) {
-        case SIGLOG_LVL_MIN: return "MINIMUM";
-        case SIGLOG_LVL_STD: return "STANDARD";
-        case SIGLOG_LVL_MAX: return "MAXIMUM";
+        case SIGLOG_DEBUG: return "DEBUG";
+        case SIGLOG_INFO: return "INFO";
+        case SIGLOG_WARNING: return "WARNING";
     }
 }
 
 static void vlog(SIGLOG_LEVEL level, char *fmt, va_list vargs) {
     pthread_mutex_lock(&log_mutex);
-    if(current_level>=level) {
+    if(current_level<=level) {
 
         // Get date
         time_t time_raw = time(NULL);
@@ -243,8 +239,7 @@ static void vlog(SIGLOG_LEVEL level, char *fmt, va_list vargs) {
         strftime(time_buffer, 50, DATE_FORMAT, time_info);
 
         // Write to file
-        fprintf(log_file, "%s | ", time_buffer);
-        fprintf(log_file, "Level %s | ", str_level(level));
+        fprintf(log_file, "%s | %s | ", time_buffer, str_level(level));
         vfprintf(log_file, fmt, vargs);
         fprintf(log_file, "\n");
         fflush(log_file);
@@ -259,23 +254,23 @@ void siglog_log(SIGLOG_LEVEL level, char *fmt, ...) {
     va_end(valist);
 }
 
-void siglog_min(char *fmt, ...) {
+void siglog_debug(char *fmt, ...) {
     va_list valist;
     va_start(valist, fmt);
-    vlog(SIGLOG_LVL_MIN, fmt, valist);
+    vlog(SIGLOG_DEBUG, fmt, valist);
     va_end(valist);
 }
 
-void siglog_std(char *fmt, ...) {
+void siglog_info(char *fmt, ...) {
     va_list valist;
     va_start(valist, fmt);
-    vlog(SIGLOG_LVL_STD, fmt, valist);
+    vlog(SIGLOG_INFO, fmt, valist);
     va_end(valist);
 }
 
-void siglog_max(char *fmt, ...) {
+void siglog_warning(char *fmt, ...) {
     va_list valist;
     va_start(valist, fmt);
-    vlog(SIGLOG_LVL_MAX, fmt, valist);
+    vlog(SIGLOG_WARNING, fmt, valist);
     va_end(valist);
 }
