@@ -21,10 +21,15 @@ unsigned short h = 1;
 unsigned int i = 1;
 unsigned long j = 1;
 
-void dump_function(FILE *file) {
+void dump_function1(FILE *file) {
     fprintf(file, "a: %c\n", a);
     fprintf(file, "b: %d\n", b);
     fprintf(file, "c: %d\n", c);
+}
+
+void dump_function2(FILE *file) {
+    fprintf(file, "e: %f\n", e);
+    fprintf(file, "f: %lf\n", f);
 }
 
 int main() {
@@ -32,10 +37,11 @@ int main() {
     // Signal 34
     printf("pid=%d\n", getpid());
 
-    int res = siglog_init(-1, -1, SIGLOG_DISABLED, "file.txt");
+    int res = siglog_init(-1, -1, SIGLOG_MAX, "/home/klima7");
     assert(res == 0);
 
-    siglog_register_dump_function(dump_function);
+    siglog_register_dump_function(dump_function1);
+    siglog_register_dump_function(dump_function2);
 
     sleep(2);
 

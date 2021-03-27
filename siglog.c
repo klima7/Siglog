@@ -6,21 +6,24 @@
 #include <stdarg.h>
 #include <time.h>
 #include <stdlib.h>
-#include <assert.h>
 #include "siglog.h"
 
 #define DATE_FORMAT "%m/%d/%y %H:%M:%S"
 
 // File scoped global variables
-static int initialized = 0;
-static pthread_t tid_level, tid_dump;
-static sem_t sem_dump;
-static pthread_mutex_t log_mutex, level_mutex;
-static pthread_cond_t level_cond;
-static volatile int level_signal_val;
+static int initialized;
+static char *dir_path;
 static SIGLOG_LEVEL current_level;
 static FILE *log_file;
-static DUMP_FUNCTION dump_function;
+static pthread_t tid_level, tid_dump;
+static sem_t sem_dump;
+static pthread_mutex_t log_mutex, level_mutex, dump_mutex;
+static pthread_cond_t level_cond;
+static volatile int level_signal_val;
+
+static DUMP_FUNCTION *dump_functions;
+static int dump_functions_size;
+static int dump_functions_capacity;
 
 
 // Prototypes of file scoped functions
@@ -67,11 +70,12 @@ static void* dump_thread(void* arg)
     while(1)
     {
         sem_wait(&sem_dump);
-        if(dump_function != NULL) {
-            FILE *dump_file = create_dump_file();
-            dump_function(dump_file);
-            fclose(dump_file);
-        }
+        FILE *dump_file = create_dump_file();
+        pthread_mutex_lock(&dump_mutex);
+        for(int i=0; i<dump_functions_size; i++)
+            dump_functions[i](dump_file);
+        pthread_mutex_unlock(&dump_mutex);
+        fclose(dump_file);
     }
 }
 
@@ -99,7 +103,7 @@ static FILE * create_dump_file() {
     return file;
 }
 
-int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_level, char* path) {
+int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* path) {
 
     // Variables
     sigset_t set, set_backup;
@@ -108,21 +112,27 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
 
     if(initialized == 1) return 1;
 
-    current_level = start_level;
-    level_signal_val = -1;
-
     // Determine signals numbers
-    if(level_signal_nr == -1) level_signal_nr = DEFAULT_LEVEL_SIGNAL;
-    if(dump_signal_nr == -1) dump_signal_nr = DEFAULT_DUMP_SIGNAL;
+    if(level_signal == -1) level_signal = DEFAULT_LEVEL_SIGNAL;
+    if(dump_signal == -1) dump_signal = DEFAULT_DUMP_SIGNAL;
+
+    // Init some global vars
+    dump_functions_capacity = 8;
+    current_level = level;
+    level_signal_val = -1;
+    dir_path = path;
 
     // Open file
-    log_file = fopen(path, "a+");
+    char filename[100] = {};
+    if(path != NULL) sprintf(filename, "%s/%s", path, "logs");
+    else sprintf(filename, "logs");
+    log_file = fopen(filename, "a+");
     if(log_file == NULL) return 1;
 
     // Set thread mask
     sigemptyset(&set);
-    sigaddset(&set, level_signal_nr);
-    sigaddset(&set, dump_signal_nr);
+    sigaddset(&set, level_signal);
+    sigaddset(&set, dump_signal);
     err = pthread_sigmask(SIG_UNBLOCK, &set, &set_backup);
     if(err != 0)  {
         fclose(log_file);
@@ -147,6 +157,14 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
         sem_destroy(&sem_dump);
         fclose(log_file);
     }
+    err = pthread_mutex_init(&dump_mutex, NULL);
+    if(err != 0) {
+        pthread_sigmask(SIG_SETMASK, &set_backup, NULL);
+        pthread_mutex_destroy(&log_mutex);
+        pthread_mutex_destroy(&level_mutex);
+        sem_destroy(&sem_dump);
+        fclose(log_file);
+    }
 
     // Init cond
     err = pthread_cond_init(&level_cond, NULL);
@@ -156,6 +174,7 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
         fclose(log_file);
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&level_mutex);
+        pthread_mutex_destroy(&dump_mutex);
     }
 
     // Set first async handler
@@ -163,13 +182,14 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
     act.sa_sigaction = level_handler;
     act.sa_mask = set;
     act.sa_flags = SA_SIGINFO;
-    err = sigaction(level_signal_nr, &act, NULL);
+    err = sigaction(level_signal, &act, NULL);
     if(err != 0) {
         pthread_sigmask(SIG_SETMASK, &set_backup, NULL);
         sem_destroy(&sem_dump);
         fclose(log_file);
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&level_mutex);
+        pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
     }
 
@@ -178,13 +198,14 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
     act.sa_sigaction = dump_handler;
     act.sa_mask = set;
     act.sa_flags = SA_SIGINFO;
-    err = sigaction(dump_signal_nr, &act, NULL);
+    err = sigaction(dump_signal, &act, NULL);
     if(err != 0) {
         pthread_sigmask(SIG_SETMASK, &set_backup, NULL);
         sem_destroy(&sem_dump);
         fclose(log_file);
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&level_mutex);
+        pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
     }
 
@@ -196,6 +217,7 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
         fclose(log_file);
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&level_mutex);
+        pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
         return 1;
     }
@@ -209,6 +231,7 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
         fclose(log_file);
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&level_mutex);
+        pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
         return 1;
     }
@@ -223,6 +246,7 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
         fclose(log_file);
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&level_mutex);
+        pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
         return 1;
     }
@@ -237,6 +261,22 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
         fclose(log_file);
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&level_mutex);
+        pthread_mutex_destroy(&dump_mutex);
+        pthread_cond_destroy(&level_cond);
+        return 1;
+    }
+
+    // Alloc array
+    dump_functions = (struct siglog_element_t *)calloc(sizeof(DUMP_FUNCTION), dump_functions_capacity);
+    if(dump_functions == NULL) {
+        pthread_cancel(tid_level);
+        pthread_cancel(tid_dump);
+        pthread_sigmask(SIG_SETMASK, &set_backup, NULL);
+        sem_destroy(&sem_dump);
+        fclose(log_file);
+        pthread_mutex_destroy(&log_mutex);
+        pthread_mutex_destroy(&level_mutex);
+        pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
         return 1;
     }
@@ -254,19 +294,22 @@ void siglog_free() {
     pthread_mutex_destroy(&log_mutex);
     pthread_mutex_destroy(&level_mutex);
     pthread_cond_destroy(&level_cond);
+    free(dump_functions);
     fclose(log_file);
 }
 
 static char *str_level(SIGLOG_LEVEL lvl) {
     switch(lvl) {
-        case SIGLOG_MAX: return "DEBUG";
-        case SIGLOG_STANDARD: return "INFO";
-        case SIGLOG_MIN: return "WARNING";
+        case SIGLOG_MAX: return "MAX";
+        case SIGLOG_STANDARD: return "STANDARD";
+        case SIGLOG_MIN: return "MIN";
         case SIGLOG_DISABLED: return "DISABLED";
     }
 }
 
 static void vlog(SIGLOG_LEVEL level, char *fmt, va_list vargs) {
+    if(level == SIGLOG_DISABLED) return;
+
     pthread_mutex_lock(&log_mutex);
     if(level<=current_level) {
 
@@ -277,7 +320,7 @@ static void vlog(SIGLOG_LEVEL level, char *fmt, va_list vargs) {
         strftime(time_buffer, 50, DATE_FORMAT, time_info);
 
         // Write to file
-        fprintf(log_file, "%s | %s | ", time_buffer, str_level(level));
+        fprintf(log_file, "%s | %-8s | ", time_buffer, str_level(level));
         vfprintf(log_file, fmt, vargs);
         fprintf(log_file, "\n");
         fflush(log_file);
@@ -313,6 +356,17 @@ void siglog_min(char *fmt, ...) {
     va_end(valist);
 }
 
-void siglog_register_dump_function(DUMP_FUNCTION fun) {
-    dump_function = fun;
+int siglog_register_dump_function(DUMP_FUNCTION fun) {
+    pthread_mutex_lock(&dump_mutex);
+
+    if(dump_functions_size >= dump_functions_capacity) {
+        struct siglog_element_t *new_dump_functions = (struct siglog_element_t *)realloc(dump_functions, sizeof(DUMP_FUNCTION) * dump_functions_capacity * 2);
+        if(new_dump_functions == NULL) return 1;
+        dump_functions = new_dump_functions;
+        dump_functions_capacity = dump_functions_capacity * 2;
+    }
+    dump_functions[dump_functions_size++] = fun;
+
+    pthread_mutex_unlock(&dump_mutex);
+    return 0;
 }
