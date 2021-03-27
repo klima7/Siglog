@@ -26,7 +26,7 @@ int main() {
     // Signal 34
     printf("pid=%d\n", getpid());
 
-    int res = siglog_init(-1, -1, SIGLOG_INFO, "file.txt");
+    int res = siglog_init(-1, -1, SIGLOG_DISABLED, "file.txt");
     assert(res == 0);
 
     siglog_dump_char("char", &a);
@@ -47,7 +47,9 @@ int main() {
 
 
     while(1) {
+        siglog_debug("Hello there %d", 4);
         siglog_info("Hello there %d", 4);
+        siglog_warning("Hello there %d", 4);
         a++;
         b++;
         c++;
@@ -58,6 +60,7 @@ int main() {
         h++;
         i++;
         j++;
+        sleep(2);
     }
 
     siglog_free();

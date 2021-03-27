@@ -11,7 +11,7 @@
 
 #define DATE_FORMAT "%m/%d/%y %H:%M:%S"
 
-
+// File scoped global variables
 static int initialized = 0;
 static pthread_t tid_level, tid_dump;
 static sem_t sem_dump;
@@ -26,10 +26,24 @@ static int dump_elements_capacity;
 static int dump_elements_size;
 
 
+// File scoped types
+static struct siglog_element_t {
+    char *name;
+    volatile void *data;
+    enum siglog_type_t type;
+};
+
+
 // Prototypes of file scoped functions
+static void* level_thread(void* arg);
+static void level_handler(int signo, siginfo_t *info, void *other);
+static void* dump_thread(void* arg);
+static void dump_handler();
 static FILE * create_dump_file();
 static void dump_elements_to_file(FILE *dump_file);
 static void dump_element_to_file(FILE *dump_file, struct siglog_element_t *element);
+static char *str_level(SIGLOG_LEVEL lvl);
+static void vlog(SIGLOG_LEVEL level, char *fmt, va_list vargs);
 
 
 static void* level_thread(void* arg)
@@ -41,9 +55,10 @@ static void* level_thread(void* arg)
         while(level_signal_val == -1)
             pthread_cond_wait(&level_cond, &level_mutex);
 
-        if(level_signal_val < SIGLOG_DEBUG || level_signal_val > SIGLOG_DISABLED) continue;
+        if(level_signal_val < SIGLOG_DISABLED || level_signal_val > SIGLOG_DEBUG) continue;
         pthread_mutex_lock(&log_mutex);
         current_level = level_signal_val;
+        printf("Logging level changed to %d\n", current_level);
         level_signal_val = -1;
         pthread_mutex_unlock(&log_mutex);
 
@@ -52,7 +67,9 @@ static void* level_thread(void* arg)
 }
 
 static void level_handler(int signo, siginfo_t *info, void *other) {
+    printf("1\n");
     pthread_mutex_lock(&level_mutex);
+    printf("2\n");
     level_signal_val = info->si_value.sival_int;
     pthread_cond_signal(&level_cond);
     pthread_mutex_unlock(&level_mutex);
@@ -63,7 +80,6 @@ static void* dump_thread(void* arg)
     while(1)
     {
         sem_wait(&sem_dump);
-
         FILE *dump_file = create_dump_file();
         dump_elements_to_file(dump_file);
         fclose(dump_file);
@@ -77,13 +93,20 @@ static void dump_handler() {
 static FILE * create_dump_file() {
     char time_buffer[50];
 
+    // Get date
     time_t time_raw = time(NULL);
     struct tm *time_info = localtime(&time_raw);
     strftime(time_buffer, 50, "%m.%d.%y-%H:%M:%S", time_info);
 
+    // Construct filename and open file
     char filename[100];
     sprintf(filename, "DUMP-%s", time_buffer);
     FILE *file = fopen(filename, "w");
+
+    // Write header line to dump file
+    fprintf(file, "%s\n", filename);
+    fprintf(file, "---------------------\n");
+
     return file;
 }
 
@@ -121,6 +144,9 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
     int err;
 
     if(initialized == 1) return 1;
+
+    current_level = start_level;
+    level_signal_val = -1;
 
     // Determine signals numbers
     if(level_signal_nr == -1) level_signal_nr = DEFAULT_LEVEL_SIGNAL;
@@ -283,8 +309,6 @@ int siglog_init(int level_signal_nr, int dump_signal_nr, SIGLOG_LEVEL start_leve
         return 1;
     }
 
-    level_signal_val = -1;
-    current_level = start_level;
     initialized = 1;
     return 0;
 }
@@ -302,9 +326,18 @@ void siglog_free() {
     fclose(log_file);
 }
 
+static char *str_level(SIGLOG_LEVEL lvl) {
+    switch(lvl) {
+        case SIGLOG_DEBUG: return "DEBUG";
+        case SIGLOG_INFO: return "INFO";
+        case SIGLOG_WARNING: return "WARNING";
+        case SIGLOG_DISABLED: return "DISABLED";
+    }
+}
+
 static void vlog(SIGLOG_LEVEL level, char *fmt, va_list vargs) {
     pthread_mutex_lock(&log_mutex);
-    if(current_level<=level) {
+    if(level<=current_level) {
 
         // Get date
         time_t time_raw = time(NULL);
@@ -312,16 +345,8 @@ static void vlog(SIGLOG_LEVEL level, char *fmt, va_list vargs) {
         char time_buffer[50];
         strftime(time_buffer, 50, DATE_FORMAT, time_info);
 
-        // Get level name
-        const char *level_name;
-        switch(level) {
-            case SIGLOG_DEBUG: level_name = "DEBUG"; break;
-            case SIGLOG_INFO: level_name = "INFO";  break;
-            case SIGLOG_WARNING: level_name = "WARNING"; break;
-        }
-
         // Write to file
-        fprintf(log_file, "%s | %s | ", time_buffer, level_name);
+        fprintf(log_file, "%s | %s | ", time_buffer, str_level(level));
         vfprintf(log_file, fmt, vargs);
         fprintf(log_file, "\n");
         fflush(log_file);
@@ -357,7 +382,7 @@ void siglog_warning(char *fmt, ...) {
     va_end(valist);
 }
 
-int siglog_dump(char *name, SIGLOG_TYPE type, void *data) {
+int siglog_dump_var(char *name, SIGLOG_TYPE type, void *data) {
     struct siglog_element_t element;
     element.name = name;
     element.type = type;
@@ -377,13 +402,13 @@ int siglog_dump(char *name, SIGLOG_TYPE type, void *data) {
     pthread_mutex_unlock(&dump_mutex);
 }
 
-void siglog_dump_char(char *name, char *val) { siglog_dump(name, SIGLOG_CHAR, val); };
-void siglog_dump_short(char *name, short *val) { siglog_dump(name, SIGLOG_SHORT, val); };
-void siglog_dump_int(char *name, int *val) { siglog_dump(name, SIGLOG_INT, val); };
-void siglog_dump_long(char *name, long *val) { siglog_dump(name, SIGLOG_LONG, val); };
-void siglog_dump_float(char *name, float *val) { siglog_dump(name, SIGLOG_FLOAT, val); };
-void siglog_dump_double(char *name, double *val) { siglog_dump(name, SIGLOG_DOUBLE, val); };
-void siglog_dump_uchar(char *name, unsigned char *val) { siglog_dump(name, SIGLOG_UCHAR, val); };
-void siglog_dump_ushort(char *name, unsigned short *val) { siglog_dump(name, SIGLOG_USHORT, val); };
-void siglog_dump_uint(char *name, unsigned int *val) { siglog_dump(name, SIGLOG_UINT, val); };
-void siglog_dump_ulong(char *name, unsigned long *val) { siglog_dump(name, SIGLOG_ULONG, val); };
+int siglog_dump_char(char *name, char *val) { return siglog_dump_var(name, SIGLOG_CHAR, val); };
+int siglog_dump_short(char *name, short *val) { return siglog_dump_var(name, SIGLOG_SHORT, val); };
+int siglog_dump_int(char *name, int *val) { return siglog_dump_var(name, SIGLOG_INT, val); };
+int siglog_dump_long(char *name, long *val) { return siglog_dump_var(name, SIGLOG_LONG, val); };
+int siglog_dump_float(char *name, float *val) { return siglog_dump_var(name, SIGLOG_FLOAT, val); };
+int siglog_dump_double(char *name, double *val) { return siglog_dump_var(name, SIGLOG_DOUBLE, val); };
+int siglog_dump_uchar(char *name, unsigned char *val) { return siglog_dump_var(name, SIGLOG_UCHAR, val); };
+int siglog_dump_ushort(char *name, unsigned short *val) { return siglog_dump_var(name, SIGLOG_USHORT, val); };
+int siglog_dump_uint(char *name, unsigned int *val) { return siglog_dump_var(name, SIGLOG_UINT, val); };
+int siglog_dump_ulong(char *name, unsigned long *val) { return siglog_dump_var(name, SIGLOG_ULONG, val); };
