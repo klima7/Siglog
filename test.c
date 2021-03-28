@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <signal.h>
 #include "siglog.h"
 
 char* dump_handler();
@@ -37,7 +38,7 @@ int main() {
     // Signal 34
     printf("pid=%d\n", getpid());
 
-    int res = siglog_init(-1, -1, SIGLOG_MAX, "/home/klima7");
+    int res = siglog_init(SIGRTMIN, SIGRTMIN+1, SIGLOG_MAX, NULL);
     assert(res == 0);
 
     siglog_register_dump_function(dump_function1);
@@ -45,7 +46,7 @@ int main() {
 
     sleep(2);
 
-
+    siglog_free();
 
     while(1) {
         siglog_max("Hello there %d", 4);
