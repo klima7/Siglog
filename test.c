@@ -1,15 +1,17 @@
+/*
+ * This file is a test of siglog library.
+ * This program consists of two tasks executed in separate threads
+ * to show that logging functions are threadsafe
+ */
+
 #include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <assert.h>
 #include <unistd.h>
 #include <pthread.h>
-#include <signal.h>
 #include <math.h>
+#include <assert.h>
 #include "siglog.h"
 
-
-// -------- Fibbonacci task -------
+// -------- Fibonacci task -------
 
 int fib_a;
 int fib_b;
@@ -81,20 +83,23 @@ void *prime_thread(void *arg) {
 // ------------- main --------------
 
 int main() {
-
-    pthread_t fibonacci_thread_tid, prime_thread_tid;
-
-    // Signal 34
     printf("pid=%d\n", getpid());
 
-    siglog_init(-1, -1, SIGLOG_STANDARD, NULL);
+    // Init library
+    int err = siglog_init(-1, -1, SIGLOG_STANDARD, NULL);
+    assert(err == 0);
 
     // Create threads
+    pthread_t fibonacci_thread_tid, prime_thread_tid;
     pthread_create(&fibonacci_thread_tid, NULL, fibbonacci_thread, NULL);
     pthread_create(&prime_thread_tid, NULL, prime_thread, NULL);
 
     // Join threads
-    while(1) sleep(1);
+    pthread_join(fibonacci_thread_tid, NULL);
+    pthread_join(prime_thread_tid, NULL);
+
+    // Free library resources
+    siglog_free();
 
     return 0;
 }

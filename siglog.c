@@ -45,8 +45,7 @@ static void level_handler(int signo, siginfo_t *info, void *other) {
     pthread_mutex_lock(&level_mutex);
     level_signal_val = info->si_value.sival_int;
     pthread_cond_signal(&level_cond);
-    pthread_mutex_unlock(&level_mutex);
-}
+    pthread_mutex_unlock(&level_mutex);}
 
 static void* level_thread(void* arg)
 {
