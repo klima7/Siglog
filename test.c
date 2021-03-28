@@ -38,15 +38,13 @@ int main() {
     // Signal 34
     printf("pid=%d\n", getpid());
 
-    int res = siglog_init(SIGRTMIN, SIGRTMIN+1, SIGLOG_MAX, NULL);
+    int res = siglog_init(SIGRTMIN, SIGRTMIN+1, SIGLOG_DISABLED, NULL);
     assert(res == 0);
 
     siglog_register_dump_function(dump_function1);
     siglog_register_dump_function(dump_function2);
 
     sleep(2);
-
-    siglog_free();
 
     while(1) {
         siglog_max("Hello there %d", 4);
