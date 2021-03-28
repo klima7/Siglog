@@ -86,7 +86,7 @@ int main() {
     printf("pid=%d\n", getpid());
 
     // Init library
-    int err = siglog_init(-1, -1, SIGLOG_STANDARD, NULL);
+    int err = siglog_init(-1, -1, SIGLOG_DISABLED, NULL);
     assert(err == 0);
 
     // Create threads

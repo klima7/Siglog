@@ -63,7 +63,7 @@ static void* level_thread(void* arg)
         while(level_signal_val == -1)
             pthread_cond_wait(&level_cond, &level_mutex);
 
-        if(level_signal_val < SIGLOG_DISABLED || level_signal_val > SIGLOG_MAX) continue;
+        if(level_signal_val < SIGLOG_DISABLED || level_signal_val > SIGLOG_MIN) continue;
         current_level = level_signal_val;
         level_signal_val = -1;
 

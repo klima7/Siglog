@@ -6,7 +6,7 @@
 #define DEFAULT_DUMP_SIGNAL SIGRTMIN+1
 
 // Types
-enum siglog_level_t { SIGLOG_DISABLED, SIGLOG_MIN, SIGLOG_STANDARD, SIGLOG_MAX };
+enum siglog_level_t { SIGLOG_DISABLED, SIGLOG_MAX, SIGLOG_STANDARD, SIGLOG_MIN };
 typedef enum siglog_level_t SIGLOG_LEVEL;
 typedef void (*DUMP_FUNCTION)(FILE *file);
 
