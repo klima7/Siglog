@@ -7,7 +7,7 @@ typedef enum siglog_level_t SIGLOG_LEVEL;
 typedef void (*DUMP_FUNCTION)(FILE *file);
 
 // Lifecycle functions
-int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* dir_path);
+int siglog_init(int level_sig, int dump_sig, SIGLOG_LEVEL level, char* dir_path);
 void siglog_free();
 
 // Logging functions

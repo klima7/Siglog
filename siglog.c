@@ -1,3 +1,9 @@
+/*
+ * Created by Lukasz Klimkiewicz
+ * Index number 222467
+ * Date 14.04.2021
+ */
+
 #include <stdio.h>
 #include <pthread.h>
 #include <semaphore.h>
@@ -12,18 +18,18 @@
 
 // Global variables
 static int initialized;
-static char *logging_dir_path;
-static SIGLOG_LEVEL current_level;
-static int level_signal_no, dump_signal_no;
+static char *logging_directory;
+static SIGLOG_LEVEL current_logging_level;
+static int level_signal, dump_signal;
 static pthread_t level_tid, dump_tid;
 static FILE *log_file;
 
-// Variables to handle dump
+// Variables to handle dump operation
 static DUMP_FUNCTION *dump_functions;
 static int dump_functions_size;
 static int dump_functions_capacity;
 
-// Variables to ensure threadsafety of logging and adding dump functions concurrently
+// Variables to ensure threadsafety of operations
 static pthread_mutex_t log_mutex;
 static pthread_mutex_t dump_mutex;
 
@@ -41,18 +47,20 @@ static pthread_mutex_t level_mutex;
 static pthread_cond_t level_cond;
 static volatile int level_signal_val;
 
+// Low level signal handler responsible for changing logging level (including disabling)
 static void level_handler(int signo, siginfo_t *info, void *other) {
     pthread_mutex_lock(&level_mutex);
     level_signal_val = info->si_value.sival_int;
     pthread_cond_signal(&level_cond);
     pthread_mutex_unlock(&level_mutex);}
 
+// High level signal handler responsible for changing logging level
 static void* level_thread(void* arg)
 {
     // Set thread mask
     sigset_t set;
     sigemptyset(&set);
-    sigaddset(&set, level_signal_no);
+    sigaddset(&set, level_signal);
     pthread_sigmask(SIG_UNBLOCK, &set, NULL);
 
     // Wait for level change signal and handle it
@@ -64,26 +72,28 @@ static void* level_thread(void* arg)
             pthread_cond_wait(&level_cond, &level_mutex);
 
         if(level_signal_val < SIGLOG_DISABLED || level_signal_val > SIGLOG_MIN) continue;
-        current_level = level_signal_val;
+        current_logging_level = level_signal_val;
         level_signal_val = -1;
 
         pthread_mutex_unlock(&level_mutex);
     }
 }
 
-// Variable to synchronize dump signal handling
+// Semaphore to synchronize dump signal handling
 static sem_t sem_dump;
 
+// Low level signal handler responsible for dump operation
 static void dump_handler() {
     sem_post(&sem_dump);
 }
 
+// High level signal handler responsible for dump operation
 static void* dump_thread(void* arg)
 {
     // Set thread mask
     sigset_t set;
     sigemptyset(&set);
-    sigaddset(&set, dump_signal_no);
+    sigaddset(&set, dump_signal);
     pthread_sigmask(SIG_UNBLOCK, &set, NULL);
 
     // Wait for dump signal and handle it
@@ -97,6 +107,7 @@ static void* dump_thread(void* arg)
     }
 }
 
+// Auxiliary function creating dump file in appropriate directory with appropriate name and returning file handler
 static FILE * create_dump_file() {
     char time_buffer[40];
 
@@ -111,7 +122,7 @@ static FILE * create_dump_file() {
 
     // Construct path
     char path[100];
-    if(logging_dir_path != NULL) sprintf(path, "%s/%s", logging_dir_path, filename);
+    if(logging_directory != NULL) sprintf(path, "%s/%s", logging_directory, filename);
     else sprintf(path, "%s", filename);
 
     // Open file
@@ -124,7 +135,16 @@ static FILE * create_dump_file() {
     return file;
 }
 
-int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* path) {
+/*
+ * Function initializing logging library. Must be called before other functions
+ * Return value: 0 in case of success, else -1
+ *
+ * level_sig - signal number to change logging level or disable logging
+ * dump_sig - signal number to perform dump operation
+ * level - initial logging level
+ * path - path to existing directory where log and dump files should appear. NULL if current directory
+ */
+int siglog_init(int level_sig, int dump_sig, SIGLOG_LEVEL level, char* path) {
 
     // Local variables
     sigset_t set;
@@ -132,14 +152,14 @@ int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* pat
     int err;
 
     if(initialized == 1)
-        return 1;
+        return -1;
 
     // Init some global vars
     dump_functions_capacity = 4;
-    current_level = level;
-    logging_dir_path = path;
-    level_signal_no = level_signal;
-    dump_signal_no = dump_signal;
+    current_logging_level = level;
+    logging_directory = path;
+    level_signal = level_sig;
+    dump_signal = dump_sig;
     level_signal_val = -1;
 
     // Open file
@@ -147,17 +167,18 @@ int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* pat
     if(path != NULL) sprintf(filename, "%s/%s", path, "logs");
     else sprintf(filename, "logs");
     log_file = fopen(filename, "a+");
-    if(log_file == NULL) return 1;
+    if(log_file == NULL) return -1;
 
     // Init semaphor
     err = sem_init(&sem_dump, 0, 0);
-    if(err != 0) return 1;
+    if(err != 0) return -1;
 
     // Init mutexes
     err = pthread_mutex_init(&level_mutex, NULL);
     if(err != 0) {
         sem_destroy(&sem_dump);
         fclose(log_file);
+        return -1;
     }
 
     err = pthread_mutex_init(&log_mutex, NULL);
@@ -165,6 +186,7 @@ int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* pat
         sem_destroy(&sem_dump);
         fclose(log_file);
         pthread_mutex_destroy(&level_mutex);
+        return -1;
     }
 
     err = pthread_mutex_init(&dump_mutex, NULL);
@@ -173,6 +195,7 @@ int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* pat
         fclose(log_file);
         pthread_mutex_destroy(&level_mutex);
         pthread_mutex_destroy(&log_mutex);
+        return -1;
     }
 
     // Init cond
@@ -183,19 +206,15 @@ int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* pat
         pthread_mutex_destroy(&level_mutex);
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&dump_mutex);
+        return -1;
     }
-
-    // Ignore all RT signals
-    act.sa_handler = SIG_IGN;
-    for(int i=SIGRTMIN; i<=SIGRTMAX; i++)
-        sigaction(i, &act, NULL);
 
     // Set first signal handler
     sigfillset(&set);
     act.sa_sigaction = level_handler;
     act.sa_mask = set;
     act.sa_flags = SA_SIGINFO;
-    err = sigaction(level_signal, &act, NULL);
+    err = sigaction(level_sig, &act, NULL);
     if(err != 0) {
         sem_destroy(&sem_dump);
         fclose(log_file);
@@ -203,13 +222,14 @@ int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* pat
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
+        return -1;
     }
 
     // Set second signal handler
     sigfillset(&set);
     act.sa_sigaction = dump_handler;
     act.sa_mask = set;
-    err = sigaction(dump_signal, &act, NULL);
+    err = sigaction(dump_sig, &act, NULL);
     if(err != 0) {
         sem_destroy(&sem_dump);
         fclose(log_file);
@@ -217,6 +237,7 @@ int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* pat
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
+        return -1;
     }
 
     // Create first thread
@@ -228,7 +249,7 @@ int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* pat
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
-        return 1;
+        return -1;
     }
 
     // Create second thread
@@ -241,7 +262,7 @@ int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* pat
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
-        return 1;
+        return -1;
     }
 
     // Detach first thread
@@ -255,7 +276,7 @@ int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* pat
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
-        return 1;
+        return -1;
     }
 
     // Detach second thread
@@ -269,7 +290,7 @@ int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* pat
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
-        return 1;
+        return -1;
     }
 
     // Alloc array of pointers to dump functions
@@ -283,13 +304,16 @@ int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* pat
         pthread_mutex_destroy(&log_mutex);
         pthread_mutex_destroy(&dump_mutex);
         pthread_cond_destroy(&level_cond);
-        return 1;
+        return -1;
     }
 
     initialized = 1;
     return 0;
 }
 
+/*
+ * Function disposing all allocated resources
+ */
 void siglog_free() {
     if(!initialized) return;
 
@@ -306,6 +330,7 @@ void siglog_free() {
     fclose(log_file);
 }
 
+// Auxiliary function converting logging level to readable form
 static char *str_level(SIGLOG_LEVEL lvl) {
     switch(lvl) {
         case SIGLOG_MAX: return "MAX";
@@ -315,10 +340,11 @@ static char *str_level(SIGLOG_LEVEL lvl) {
     }
 }
 
+// Auxiliary logging function accepting va_list
 static void vlog(SIGLOG_LEVEL level, char *fmt, va_list vargs) {
     if(!initialized || level == SIGLOG_DISABLED) return;
 
-    if(level<=current_level) {
+    if(level <= current_logging_level) {
 
         // Get date
         time_t time_raw = time(NULL);
@@ -339,6 +365,11 @@ static void vlog(SIGLOG_LEVEL level, char *fmt, va_list vargs) {
 
 }
 
+/*
+ * Universal function creating log entries with provided logging level
+ * level - loggin level
+ * fmt, ... - arguments similar to printf
+ */
 void siglog_log(SIGLOG_LEVEL level, char *fmt, ...) {
     va_list valist;
     va_start(valist, fmt);
@@ -346,6 +377,10 @@ void siglog_log(SIGLOG_LEVEL level, char *fmt, ...) {
     va_end(valist);
 }
 
+/*
+ * Function to add log entry with maximum priority
+ * fmt, ... - arguments similar to printf
+ */
 void siglog_max(char *fmt, ...) {
     va_list valist;
     va_start(valist, fmt);
@@ -353,6 +388,10 @@ void siglog_max(char *fmt, ...) {
     va_end(valist);
 }
 
+/*
+ * Function to add log entry with standard priority
+ * fmt, ... - arguments similar to printf
+ */
 void siglog_standard(char *fmt, ...) {
     va_list valist;
     va_start(valist, fmt);
@@ -360,6 +399,10 @@ void siglog_standard(char *fmt, ...) {
     va_end(valist);
 }
 
+/*
+ * Function to add log entry with minimum priority
+ * fmt, ... - arguments similar to printf
+ */
 void siglog_min(char *fmt, ...) {
     va_list valist;
     va_start(valist, fmt);
@@ -367,14 +410,24 @@ void siglog_min(char *fmt, ...) {
     va_end(valist);
 }
 
+/*
+ * Function responsible for registering dump functions
+ * Library user can register as many dump functions as he want. These functions are responsible for supplying data,
+ * which will be preserved in dump files In case of multiple dump functions, data is stored in dumps file in order
+ * or functions registration.
+ *
+ * fun - pointer to dump function
+ *
+ * Return value: 0 in case of success, else -1
+ */
 int siglog_register_dump_function(DUMP_FUNCTION fun) {
-    if(!initialized) return 1;
+    if(!initialized) return -1;
 
     pthread_mutex_lock(&dump_mutex);
 
     if(dump_functions_size >= dump_functions_capacity) {
         DUMP_FUNCTION *new_dump_functions = (DUMP_FUNCTION *)realloc(dump_functions, sizeof(DUMP_FUNCTION) * dump_functions_capacity * 2);
-        if(new_dump_functions == NULL) return 1;
+        if(new_dump_functions == NULL) return -1;
         dump_functions = new_dump_functions;
         dump_functions_capacity = dump_functions_capacity * 2;
     }

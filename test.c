@@ -1,7 +1,16 @@
 /*
- * This file is a test of siglog library.
- * This program consists of two tasks executed in separate threads
- * to show that logging functions are threadsafe
+ * This file is a test of siglog library
+ * This program consists of two tasks executing in two separate threads to emphasize threadsafety
+ *
+ *  Logging in this example is by default disabled, to change logging level send signal LEVEL_SIGNAL with value:
+ *  0 - disable logging
+ *  1 - set logging priority to max (less verbose)
+ *  2 - set logging priority to standard
+ *  3 - set logging priority to min (most verbose)
+ *
+ *  To create dump file send signal DUMP_SIGNAL
+ *
+ *  Log file and dump files will be saved in current directory (in this example, it's adjustable)
  */
 
 #include <stdio.h>
@@ -12,18 +21,23 @@
 #include <signal.h>
 #include "siglog.h"
 
-// -------- Fibonacci task -------
+#define LEVEL_SIGNAL SIGRTMIN
+#define DUMP_SIGNAL SIGRTMIN+1
+
+// -------------- Fibonacci task -------------
 
 int fib_a;
 int fib_b;
 int fib_c;
 
+// Dump handler used in dump operation
 void fibbonacci_dump(FILE *dump) {
     fprintf(dump, "fib_a: %d\n", fib_a);
     fprintf(dump, "fib_b: %d\n", fib_b);
     fprintf(dump, "fib_c: %d\n", fib_c);
 }
 
+// Simple thread doing something with Fibbonacci numbers
 void *fibbonacci_thread(void *arg) {
     siglog_register_dump_function(fibbonacci_dump);
 
@@ -51,43 +65,50 @@ void *fibbonacci_thread(void *arg) {
     }
 }
 
-// --------- prime task ----------
+
+// --------------- Prime task ----------------
 
 int prime_next;
 
+// Dump handler used in dump operation
 void prime_dump(FILE *dump) {
     fprintf(dump, "prime_next: %d\n", prime_next);
 }
 
-int is_prime(int num) {
-    for(int i=2; i<=sqrt(num); i++) {
-        if(num % i == 0)
-            return 0;
-    }
-    return 1;
-}
-
+// Simple thread doing something with prime numbers
 void *prime_thread(void *arg) {
     siglog_register_dump_function(prime_dump);
     siglog_standard("Starting searching prime numbers");
     prime_next = 2;
+
     while(1) {
         siglog_min("Checking whether number %d is prime", prime_next);
-        if(is_prime(prime_next)) {
+        int is_prime = 1;
+        for(int i=2; i<=sqrt(prime_next); i++) {
+            if(prime_next % i == 0) {
+                is_prime = 0;
+                break;
+            }
+        }
+
+        if(is_prime) {
             siglog_max("Prime number %d found", prime_next);
         }
+
+        siglog_min("Incrementing prime_next");
         prime_next++;
         sleep(1);
     }
 }
 
-// ------------- main --------------
+
+// ------------------- main --------------------
 
 int main() {
-    printf("pid=%d; level change signal: %d; dump signal: %d\n", getpid(), SIGRTMIN, SIGRTMIN+1);
+    printf("pid=%d; level change signal: %d; dump signal: %d\n", getpid(), LEVEL_SIGNAL, DUMP_SIGNAL);
 
     // Init library
-    int err = siglog_init(SIGRTMIN, SIGRTMIN+1, SIGLOG_DISABLED, NULL);
+    int err = siglog_init(LEVEL_SIGNAL, DUMP_SIGNAL, SIGLOG_DISABLED, NULL);
     assert(err == 0);
 
     // Create threads
