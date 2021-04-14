@@ -1,10 +1,6 @@
 #ifndef UNTITLED2_SIGLOG_H
 #define UNTITLED2_SIGLOG_H
 
-// Definitions
-#define DEFAULT_LEVEL_SIGNAL SIGRTMIN
-#define DEFAULT_DUMP_SIGNAL SIGRTMIN+1
-
 // Types
 enum siglog_level_t { SIGLOG_DISABLED, SIGLOG_MAX, SIGLOG_STANDARD, SIGLOG_MIN };
 typedef enum siglog_level_t SIGLOG_LEVEL;

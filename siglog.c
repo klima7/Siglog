@@ -55,7 +55,7 @@ static void* level_thread(void* arg)
     sigaddset(&set, level_signal_no);
     pthread_sigmask(SIG_UNBLOCK, &set, NULL);
 
-    // Wait for level change signal and handle
+    // Wait for level change signal and handle it
     while(1)
     {
         pthread_mutex_lock(&level_mutex);
@@ -71,7 +71,7 @@ static void* level_thread(void* arg)
     }
 }
 
-// Variables to synchronize dump signal handling
+// Variable to synchronize dump signal handling
 static sem_t sem_dump;
 
 static void dump_handler() {
@@ -86,7 +86,7 @@ static void* dump_thread(void* arg)
     sigaddset(&set, dump_signal_no);
     pthread_sigmask(SIG_UNBLOCK, &set, NULL);
 
-    // Wait for dump signal and handle
+    // Wait for dump signal and handle it
     while(1)
     {
         sem_wait(&sem_dump);
@@ -98,12 +98,12 @@ static void* dump_thread(void* arg)
 }
 
 static FILE * create_dump_file() {
-    char time_buffer[50];
+    char time_buffer[40];
 
     // Get date
     time_t time_raw = time(NULL);
     struct tm *time_info = localtime(&time_raw);
-    strftime(time_buffer, 50, "%m.%d.%y-%H:%M:%S", time_info);
+    strftime(time_buffer, 40, "%m.%d.%y-%H:%M:%S", time_info);
 
     // Construct filename
     char filename[50];
@@ -112,7 +112,7 @@ static FILE * create_dump_file() {
     // Construct path
     char path[100];
     if(logging_dir_path != NULL) sprintf(path, "%s/%s", logging_dir_path, filename);
-    else sprintf(path, filename);
+    else sprintf(path, "%s", filename);
 
     // Open file
     FILE *file = fopen(path, "w");
@@ -134,17 +134,13 @@ int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* pat
     if(initialized == 1)
         return 1;
 
-    // Determine signals numbers
-    if(level_signal == -1) level_signal = DEFAULT_LEVEL_SIGNAL;
-    if(dump_signal == -1) dump_signal = DEFAULT_DUMP_SIGNAL;
-
     // Init some global vars
-    dump_functions_capacity = 8;
+    dump_functions_capacity = 4;
     current_level = level;
-    level_signal_val = -1;
     logging_dir_path = path;
     level_signal_no = level_signal;
     dump_signal_no = dump_signal;
+    level_signal_val = -1;
 
     // Open file
     char filename[100] = {};
@@ -194,7 +190,7 @@ int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* pat
     for(int i=SIGRTMIN; i<=SIGRTMAX; i++)
         sigaction(i, &act, NULL);
 
-    // Set first RT signal handler
+    // Set first signal handler
     sigfillset(&set);
     act.sa_sigaction = level_handler;
     act.sa_mask = set;
@@ -209,7 +205,7 @@ int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* pat
         pthread_cond_destroy(&level_cond);
     }
 
-    // Set second RT signal handler
+    // Set second signal handler
     sigfillset(&set);
     act.sa_sigaction = dump_handler;
     act.sa_mask = set;
@@ -276,7 +272,7 @@ int siglog_init(int level_signal, int dump_signal, SIGLOG_LEVEL level, char* pat
         return 1;
     }
 
-    // Alloc array
+    // Alloc array of pointers to dump functions
     dump_functions = (DUMP_FUNCTION *)calloc(sizeof(DUMP_FUNCTION), dump_functions_capacity);
     if(dump_functions == NULL) {
         pthread_cancel(level_tid);

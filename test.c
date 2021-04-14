@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include <math.h>
 #include <assert.h>
+#include <signal.h>
 #include "siglog.h"
 
 // -------- Fibonacci task -------
@@ -83,10 +84,10 @@ void *prime_thread(void *arg) {
 // ------------- main --------------
 
 int main() {
-    printf("pid=%d\n", getpid());
+    printf("pid=%d; level change signal: %d; dump signal: %d\n", getpid(), SIGRTMIN, SIGRTMIN+1);
 
     // Init library
-    int err = siglog_init(-1, -1, SIGLOG_DISABLED, NULL);
+    int err = siglog_init(SIGRTMIN, SIGRTMIN+1, SIGLOG_DISABLED, NULL);
     assert(err == 0);
 
     // Create threads
