@@ -38,7 +38,7 @@ void fibbonacci_dump(FILE *dump) {
 }
 
 // Simple thread doing something with Fibbonacci numbers
-void *fibbonacci_thread(void *arg) {
+_Noreturn void *fibbonacci_thread(void *arg) {
     siglog_register_dump_function(fibbonacci_dump);
 
     siglog_standard("Starting calculating fibonacci numbers");
@@ -76,7 +76,7 @@ void prime_dump(FILE *dump) {
 }
 
 // Simple thread doing something with prime numbers
-void *prime_thread(void *arg) {
+_Noreturn void *prime_thread(void *arg) {
     siglog_register_dump_function(prime_dump);
     siglog_standard("Starting searching prime numbers");
     prime_next = 2;
