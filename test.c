@@ -68,10 +68,12 @@ _Noreturn void *fibbonacci_thread(void *arg) {
 
 // --------------- Prime task ----------------
 
+int primes_count;
 int prime_next;
 
 // Dump handler used in dump operation
 void prime_dump(FILE *dump) {
+    fprintf(dump, "primes_count: %d\n", primes_count);
     fprintf(dump, "prime_next: %d\n", prime_next);
 }
 
@@ -93,6 +95,7 @@ _Noreturn void *prime_thread(void *arg) {
 
         if(is_prime) {
             siglog_max("Prime number %d found", prime_next);
+            primes_count++;
         }
 
         siglog_min("Incrementing prime_next");
@@ -108,7 +111,7 @@ int main() {
     printf("pid=%d; level change signal: %d; dump signal: %d\n", getpid(), LEVEL_SIGNAL, DUMP_SIGNAL);
 
     // Init library
-    int err = siglog_init(LEVEL_SIGNAL, DUMP_SIGNAL, SIGLOG_DISABLED, NULL);
+    int err = siglog_init(LEVEL_SIGNAL, DUMP_SIGNAL, SIGLOG_DISABLED, "../logs");
     assert(err == 0);
 
     // Create threads
