@@ -111,7 +111,7 @@ int main() {
     printf("pid=%d; level change signal: %d; dump signal: %d\n", getpid(), LEVEL_SIGNAL, DUMP_SIGNAL);
 
     // Init library
-    int err = siglog_init(LEVEL_SIGNAL, DUMP_SIGNAL, SIGLOG_DISABLED, "../logs");
+    int err = siglog_init(LEVEL_SIGNAL, DUMP_SIGNAL, SIGLOG_DISABLED, NULL);
     assert(err == 0);
 
     // Create threads
