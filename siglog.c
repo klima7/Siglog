@@ -34,9 +34,10 @@ static pthread_mutex_t log_mutex;
 static pthread_mutex_t dump_mutex;
 
 // Prototypes of file scoped functions
-static void* level_thread(void* arg);
+_Noreturn static void* level_thread(void* arg);
 static void level_handler(int signo, siginfo_t *info, void *other);
-static void* dump_thread(void* arg);
+
+_Noreturn static void* dump_thread(void* arg);
 static void dump_handler();
 static FILE * create_dump_file();
 static char *str_level(SIGLOG_LEVEL lvl);
@@ -55,7 +56,7 @@ static void level_handler(int signo, siginfo_t *info, void *other) {
     pthread_mutex_unlock(&level_mutex);}
 
 // High level signal handler responsible for changing logging level
-static void* level_thread(void* arg)
+_Noreturn static void* level_thread(void* arg)
 {
     // Set thread mask
     sigset_t set;
@@ -88,7 +89,7 @@ static void dump_handler() {
 }
 
 // High level signal handler responsible for dump operation
-static void* dump_thread(void* arg)
+_Noreturn static void* dump_thread(void* arg)
 {
     // Set thread mask
     sigset_t set;
@@ -336,7 +337,7 @@ static char *str_level(SIGLOG_LEVEL lvl) {
         case SIGLOG_MAX: return "MAX";
         case SIGLOG_STANDARD: return "STANDARD";
         case SIGLOG_MIN: return "MIN";
-        case SIGLOG_DISABLED: return "DISABLED";
+        default: return "";
     }
 }
 
